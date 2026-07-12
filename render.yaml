@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: mendeley-controlled-writer
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --workers 1 --threads 4 --timeout 45 app:app
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.5
+      - key: SIGNING_SECRET
+        generateValue: true
+      - key: PREVIEW_TTL_SECONDS
+        value: 900
+      - key: FILE_PREVIEW_TTL_SECONDS
+        value: 240
+      - key: MAX_PDF_BYTES
+        value: 10485760
+      - key: RATE_LIMIT_PER_MINUTE
+        value: 60
