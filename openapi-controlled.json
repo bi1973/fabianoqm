@@ -1,0 +1,287 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Mendeley Controlled Read-Write Bridge",
+    "version": "1.0.0",
+    "description": "Consulta e grava referências e PDFs no Mendeley com prévia, confirmação obrigatória, verificação de duplicidade e sem operações de exclusão."
+  },
+  "servers": [
+    {
+      "url": "https://mendeley-controlled-writer.onrender.com"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "mendeleyOAuth": {
+        "type": "oauth2",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://mendeley-controlled-writer.onrender.com/oauth/authorize",
+            "tokenUrl": "https://mendeley-controlled-writer.onrender.com/oauth/token",
+            "scopes": {
+              "all": "Acesso à biblioteca autorizada do Mendeley"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Person": {
+        "type": "object",
+        "properties": {
+          "first_name": {"type": "string"},
+          "last_name": {"type": "string"}
+        }
+      },
+      "DocumentInput": {
+        "type": "object",
+        "required": ["title", "type"],
+        "properties": {
+          "title": {"type": "string"},
+          "type": {"type": "string", "description": "Tipo Mendeley, como journal, book, book_section, thesis, report ou conference_proceedings."},
+          "authors": {"type": "array", "items": {"$ref": "#/components/schemas/Person"}},
+          "year": {"type": "integer"},
+          "source": {"type": "string"},
+          "abstract": {"type": "string"},
+          "identifiers": {"type": "object", "additionalProperties": {"type": "string"}},
+          "keywords": {"type": "array", "items": {"type": "string"}},
+          "tags": {"type": "array", "items": {"type": "string"}},
+          "websites": {"type": "array", "items": {"type": "string"}},
+          "pages": {"type": "string"},
+          "volume": {"type": "string"},
+          "issue": {"type": "string"},
+          "publisher": {"type": "string"},
+          "institution": {"type": "string"}
+        }
+      },
+      "PreviewConfirmation": {
+        "type": "object",
+        "required": ["preview_token", "confirmation"],
+        "properties": {
+          "preview_token": {"type": "string"},
+          "confirmation": {"type": "string", "enum": ["CONFIRMO SALVAR"]}
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {"type": "string"},
+          "message": {"type": "string"},
+          "details": {}
+        }
+      }
+    }
+  },
+  "security": [
+    {"mendeleyOAuth": ["all"]}
+  ],
+  "paths": {
+    "/api/profile": {
+      "get": {
+        "operationId": "getMendeleyProfile",
+        "summary": "Confirmar a conta Mendeley conectada",
+        "x-openai-isConsequential": false,
+        "responses": {"200": {"description": "Perfil conectado"}}
+      }
+    },
+    "/api/folders": {
+      "get": {
+        "operationId": "listMendeleyFolders",
+        "summary": "Listar coleções e pastas do Mendeley",
+        "x-openai-isConsequential": false,
+        "responses": {"200": {"description": "Coleções disponíveis"}}
+      }
+    },
+    "/api/documents": {
+      "get": {
+        "operationId": "searchMendeleyDocuments",
+        "summary": "Pesquisar referências na biblioteca pessoal",
+        "x-openai-isConsequential": false,
+        "parameters": [
+          {"name": "q", "in": "query", "required": false, "schema": {"type": "string", "maxLength": 300}},
+          {"name": "folder_id", "in": "query", "required": false, "schema": {"type": "string"}},
+          {"name": "limit", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20}}
+        ],
+        "responses": {"200": {"description": "Referências encontradas"}}
+      }
+    },
+    "/api/documents/{document_id}": {
+      "get": {
+        "operationId": "getMendeleyDocument",
+        "summary": "Obter metadados completos de uma referência",
+        "x-openai-isConsequential": false,
+        "parameters": [{"name": "document_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "Metadados completos"}}
+      }
+    },
+    "/api/documents/{document_id}/files": {
+      "get": {
+        "operationId": "listMendeleyDocumentFiles",
+        "summary": "Verificar arquivos anexados a uma referência",
+        "x-openai-isConsequential": false,
+        "parameters": [{"name": "document_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "Arquivos anexados"}}
+      }
+    },
+    "/api/documents/{document_id}/pdfs": {
+      "get": {
+        "operationId": "getMendeleyDocumentPdfs",
+        "summary": "Entregar PDFs de uma referência ao ChatGPT",
+        "x-openai-isConsequential": false,
+        "parameters": [{"name": "document_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {
+            "description": "Até dez PDFs com no máximo 10 MB cada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "openaiFileResponse": {"type": "array", "items": {"type": "string", "format": "uri"}}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/audit": {
+      "get": {
+        "operationId": "getMendeleyBridgeAudit",
+        "summary": "Consultar eventos recentes de auditoria do bridge",
+        "x-openai-isConsequential": false,
+        "parameters": [{"name": "limit", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}}],
+        "responses": {"200": {"description": "Eventos recentes"}}
+      }
+    },
+    "/api/write/documents/preview": {
+      "post": {
+        "operationId": "previewCreateMendeleyDocument",
+        "summary": "Preparar a criação de uma referência sem gravar",
+        "description": "Valida metadados, verifica duplicatas e gera uma prévia temporária. Esta operação não modifica o Mendeley.",
+        "x-openai-isConsequential": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["document"],
+                "properties": {
+                  "document": {"$ref": "#/components/schemas/DocumentInput"},
+                  "folder_id": {"type": "string"},
+                  "allow_duplicate": {"type": "boolean", "default": false}
+                }
+              }
+            }
+          }
+        },
+        "responses": {"200": {"description": "Prévia pronta"}, "409": {"description": "Duplicata encontrada"}}
+      }
+    },
+    "/api/write/documents/confirm": {
+      "post": {
+        "operationId": "confirmCreateMendeleyDocument",
+        "summary": "Confirmar e criar uma referência no Mendeley",
+        "description": "Grava somente a referência descrita por uma prévia válida. Exige confirmação explícita e nunca exclui itens.",
+        "x-openai-isConsequential": true,
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PreviewConfirmation"}}}},
+        "responses": {"201": {"description": "Referência criada"}}
+      }
+    },
+    "/api/write/documents/{document_id}/update-preview": {
+      "post": {
+        "operationId": "previewUpdateMendeleyDocument",
+        "summary": "Preparar alterações em uma referência sem gravar",
+        "x-openai-isConsequential": false,
+        "parameters": [{"name": "document_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["changes"], "properties": {"changes": {"type": "object"}}}}}},
+        "responses": {"200": {"description": "Comparação antes e depois"}}
+      }
+    },
+    "/api/write/documents/{document_id}/update-confirm": {
+      "post": {
+        "operationId": "confirmUpdateMendeleyDocument",
+        "summary": "Confirmar alterações em uma referência",
+        "x-openai-isConsequential": true,
+        "parameters": [{"name": "document_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PreviewConfirmation"}}}},
+        "responses": {"200": {"description": "Referência atualizada"}}
+      }
+    },
+    "/api/write/folders/preview": {
+      "post": {
+        "operationId": "previewCreateMendeleyFolder",
+        "summary": "Preparar a criação de uma coleção sem gravar",
+        "x-openai-isConsequential": false,
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}, "parent_id": {"type": "string"}}}}}},
+        "responses": {"200": {"description": "Prévia pronta"}, "409": {"description": "Coleção duplicada"}}
+      }
+    },
+    "/api/write/folders/confirm": {
+      "post": {
+        "operationId": "confirmCreateMendeleyFolder",
+        "summary": "Confirmar e criar uma coleção no Mendeley",
+        "x-openai-isConsequential": true,
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PreviewConfirmation"}}}},
+        "responses": {"201": {"description": "Coleção criada"}}
+      }
+    },
+    "/api/write/pdf-import/preview": {
+      "post": {
+        "operationId": "previewImportPdfToMendeley",
+        "summary": "Preparar a importação de um PDF como nova referência",
+        "description": "Baixa temporariamente um PDF da conversa, valida tamanho e assinatura, calcula SHA-1 e verifica duplicidade. Não grava.",
+        "x-openai-isConsequential": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["openaiFileIdRefs"],
+                "properties": {
+                  "openaiFileIdRefs": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 1, "description": "Exatamente um PDF enviado pelo usuário na conversa."},
+                  "folder_id": {"type": "string"},
+                  "allow_duplicate": {"type": "boolean", "default": false}
+                }
+              }
+            }
+          }
+        },
+        "responses": {"200": {"description": "Prévia pronta"}, "409": {"description": "PDF duplicado"}}
+      }
+    },
+    "/api/write/pdf-import/confirm": {
+      "post": {
+        "operationId": "confirmImportPdfToMendeley",
+        "summary": "Confirmar e importar um PDF como nova referência",
+        "description": "Cria a referência a partir do PDF e usa a extração de metadados do Mendeley. A prévia de arquivo expira em quatro minutos.",
+        "x-openai-isConsequential": true,
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PreviewConfirmation"}}}},
+        "responses": {"201": {"description": "Referência e PDF criados"}}
+      }
+    },
+    "/api/write/documents/{document_id}/files/preview": {
+      "post": {
+        "operationId": "previewAttachPdfToMendeleyDocument",
+        "summary": "Preparar o anexo de um PDF a uma referência",
+        "x-openai-isConsequential": false,
+        "parameters": [{"name": "document_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["openaiFileIdRefs"], "properties": {"openaiFileIdRefs": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 1, "description": "Exatamente um PDF enviado pelo usuário na conversa."}}}}}},
+        "responses": {"200": {"description": "Prévia pronta"}, "409": {"description": "PDF já anexado"}}
+      }
+    },
+    "/api/write/documents/{document_id}/files/confirm": {
+      "post": {
+        "operationId": "confirmAttachPdfToMendeleyDocument",
+        "summary": "Confirmar o anexo de um PDF a uma referência",
+        "x-openai-isConsequential": true,
+        "parameters": [{"name": "document_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PreviewConfirmation"}}}},
+        "responses": {"201": {"description": "PDF anexado"}}
+      }
+    }
+  }
+}
