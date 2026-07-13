@@ -17,7 +17,7 @@ def test_root_status():
     data = response.get_json()
     assert data["mode"] == "controlled-read-write"
     assert data["delete_enabled"] is False
-    assert data["version"] == "1.0.2"
+    assert data["version"] == "1.0.3"
 
 
 def test_health():
@@ -140,3 +140,50 @@ def test_token_exchange_rewrites_redirect_uri(monkeypatch):
     )
     assert captured["auth"] == ("24023", "test-secret")
     assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_oauth_error_diagnostics_allowlist_and_redact():
+    class FakeErrorResponse:
+        status_code = 403
+        headers = {"Content-Type": "application/json; charset=utf-8"}
+        text = ""
+
+        def json(self):
+            return {
+                "error": "invalid_client",
+                "error_description": (
+                    "Client rejected; client_secret=super-secret-value "
+                    "code=abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG"
+                ),
+                "access_token": "must-never-be-logged",
+                "nested": {"refresh_token": "also-secret"},
+            }
+
+    diagnostic = bridge_app._sanitized_oauth_provider_error(FakeErrorResponse())
+    rendered = repr(diagnostic)
+    assert diagnostic["provider_error"] == "invalid_client"
+    assert "provider_error_description" in diagnostic
+    assert "super-secret-value" not in rendered
+    assert "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG" not in rendered
+    assert "access_token" not in diagnostic
+    assert "nested" not in diagnostic
+    assert "[REDACTED]" in rendered
+
+
+def test_oauth_error_diagnostics_sanitize_non_json_body():
+    class FakeHtmlResponse:
+        headers = {"Content-Type": "text/html"}
+        text = (
+            "<html><body>Forbidden state=0123456789abcdefghijklmnopqrstuvwxyz "
+            "Bearer abcdefghijklmnopqrstuvwxyz0123456789</body></html>"
+        )
+
+        def json(self):
+            raise ValueError("not json")
+
+    diagnostic = bridge_app._sanitized_oauth_provider_error(FakeHtmlResponse())
+    rendered = diagnostic["provider_message"]
+    assert "<html>" not in rendered
+    assert "0123456789abcdefghijklmnopqrstuvwxyz" not in rendered
+    assert "abcdefghijklmnopqrstuvwxyz0123456789" not in rendered
+    assert "[REDACTED]" in rendered
