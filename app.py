@@ -12,6 +12,7 @@ for _part in (
     "_bridge_part2.py",
     "_bridge_part3.py",
     "_bridge_part4.py",
+    "_bridge_oauth_fix.py",
 ):
     _path = _BASE / _part
     exec(compile(_path.read_text(encoding="utf-8"), str(_path), "exec"), globals(), globals())
