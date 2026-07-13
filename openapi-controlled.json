@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Mendeley Controlled Read-Write Bridge",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Consulta e grava referências e PDFs no Mendeley com prévia, confirmação obrigatória, verificação de duplicidade e sem operações de exclusão."
   },
   "servers": [
@@ -16,8 +16,8 @@
         "type": "oauth2",
         "flows": {
           "authorizationCode": {
-            "authorizationUrl": "https://mendeley-controlled-writer.onrender.com/oauth/authorize",
-            "tokenUrl": "https://mendeley-controlled-writer.onrender.com/oauth/token",
+            "authorizationUrl": "https://api.mendeley.com/oauth/authorize",
+            "tokenUrl": "https://api.mendeley.com/oauth/token",
             "scopes": {
               "all": "Acesso à biblioteca autorizada do Mendeley"
             }
