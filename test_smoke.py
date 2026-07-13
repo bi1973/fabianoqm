@@ -3,6 +3,7 @@ from urllib.parse import parse_qs, urlparse
 
 os.environ.setdefault("SIGNING_SECRET", "test-secret-that-is-long-enough-for-tests")
 os.environ.setdefault("PUBLIC_BASE_URL", "https://mendeley-controlled-writer.onrender.com")
+os.environ.setdefault("CHATGPT_CALLBACK_HOST", "chatgpt.com")
 
 import app as bridge_app  # noqa: E402
 
@@ -16,6 +17,7 @@ def test_root_status():
     data = response.get_json()
     assert data["mode"] == "controlled-read-write"
     assert data["delete_enabled"] is False
+    assert data["version"] == "1.0.2"
 
 
 def test_health():
@@ -30,17 +32,15 @@ def test_api_requires_oauth():
     assert response.status_code == 401
 
 
-def test_oauth_authorize_uses_bridge_callback_and_relays_to_chatgpt():
+def test_oauth_authorize_uses_bridge_callback_and_returns_to_chatgpt_com():
     client = app.test_client()
-    chatgpt_callback = (
-        "https://chat.openai.com/aip/g-test123/oauth/callback"
-    )
+    legacy_callback = "https://chat.openai.com/aip/g-test123/oauth/callback"
     response = client.get(
         "/oauth/authorize",
         query_string={
             "response_type": "code",
             "client_id": "24023",
-            "redirect_uri": chatgpt_callback,
+            "redirect_uri": legacy_callback,
             "state": "chatgpt-state-123",
             "scope": "all",
         },
@@ -59,12 +59,37 @@ def test_oauth_authorize_uses_bridge_callback_and_relays_to_chatgpt():
         "/oauth/callback",
         query_string={"code": "provider-code", "state": relay_state},
     )
-    assert callback_response.status_code == 302
+    assert callback_response.status_code == 303
     returned = urlparse(callback_response.headers["Location"])
     returned_query = parse_qs(returned.query)
-    assert f"{returned.scheme}://{returned.netloc}{returned.path}" == chatgpt_callback
+    assert f"{returned.scheme}://{returned.netloc}{returned.path}" == (
+        "https://chatgpt.com/aip/g-test123/oauth/callback"
+    )
     assert returned_query["code"] == ["provider-code"]
     assert returned_query["state"] == ["chatgpt-state-123"]
+    assert callback_response.headers["Cache-Control"] == "no-store"
+
+
+def test_oauth_keeps_current_chatgpt_callback_host():
+    client = app.test_client()
+    current_callback = "https://chatgpt.com/aip/g-test456/oauth/callback"
+    response = client.get(
+        "/oauth/authorize",
+        query_string={
+            "response_type": "code",
+            "client_id": "24023",
+            "redirect_uri": current_callback,
+            "state": "chatgpt-state-456",
+            "scope": "all",
+        },
+    )
+    relay_state = parse_qs(urlparse(response.headers["Location"]).query)["state"][0]
+    callback_response = client.get(
+        "/oauth/callback",
+        query_string={"code": "provider-code", "state": relay_state},
+    )
+    returned = urlparse(callback_response.headers["Location"])
+    assert f"{returned.scheme}://{returned.netloc}{returned.path}" == current_callback
 
 
 def test_oauth_rejects_untrusted_callback():
@@ -114,3 +139,4 @@ def test_token_exchange_rewrites_redirect_uri(monkeypatch):
         "https://mendeley-controlled-writer.onrender.com/oauth/callback"
     )
     assert captured["auth"] == ("24023", "test-secret")
+    assert response.headers["Cache-Control"] == "no-store"
