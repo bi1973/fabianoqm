@@ -5,14 +5,24 @@ root domain. Mendeley, however, requires the redirect URI used during token
 exchange to match the redirect URI used during authorization. This module keeps
 ChatGPT talking only to the Render domain while safely relaying the Mendeley
 callback back to ChatGPT.
+
+Some ChatGPT clients still send the legacy ``chat.openai.com`` callback. That
+host can redirect to the new ``chatgpt.com`` frontend without preserving the
+OAuth callback route, producing ``/undefined``. The relay therefore validates
+both official hosts but returns the browser to a configurable canonical host,
+which defaults to ``chatgpt.com``.
 """
 
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 OAUTH_PUBLIC_BASE_URL = os.getenv(
     "PUBLIC_BASE_URL", "https://mendeley-controlled-writer.onrender.com"
 ).rstrip("/")
 OAUTH_CALLBACK_URL = f"{OAUTH_PUBLIC_BASE_URL}/oauth/callback"
 OAUTH_RELAY_TTL_SECONDS = int(os.getenv("OAUTH_RELAY_TTL_SECONDS", "600"))
+CHATGPT_CALLBACK_HOST = os.getenv("CHATGPT_CALLBACK_HOST", "chatgpt.com").strip().lower()
+if CHATGPT_CALLBACK_HOST not in {"chat.openai.com", "chatgpt.com"}:
+    CHATGPT_CALLBACK_HOST = "chatgpt.com"
+
 oauth_relay_serializer = URLSafeTimedSerializer(
     SIGNING_SECRET, salt="mendeley-oauth-callback-relay-v1"
 )
@@ -30,6 +40,7 @@ def _validated_chatgpt_callback(value: str) -> str:
         or parsed.fragment
         or parsed.username
         or parsed.password
+        or parsed.port not in {None, 443}
     ):
         raise BridgeError(
             400,
@@ -37,6 +48,14 @@ def _validated_chatgpt_callback(value: str) -> str:
             "A URL de retorno do ChatGPT é inválida ou não autorizada.",
         )
     return value
+
+
+def _canonical_chatgpt_callback(value: str) -> str:
+    """Return the validated callback on the canonical ChatGPT frontend host."""
+
+    validated = _validated_chatgpt_callback(value)
+    parsed = urlparse(validated)
+    return f"https://{CHATGPT_CALLBACK_HOST}{parsed.path}"
 
 
 def oauth_authorize_relay():
@@ -59,10 +78,12 @@ def oauth_authorize_relay():
         )
 
     original_redirect_uri = _validated_chatgpt_callback(original_redirect_uri)
+    return_redirect_uri = _canonical_chatgpt_callback(original_redirect_uri)
     relay_state = oauth_relay_serializer.dumps(
         {
             "client_id": client_id,
             "chatgpt_redirect_uri": original_redirect_uri,
+            "chatgpt_return_uri": return_redirect_uri,
             "chatgpt_state": original_state,
             "issued_at": int(time.time()),
         }
@@ -79,6 +100,7 @@ def oauth_authorize_relay():
         "redirected",
         client_id=client_id,
         callback_host=urlparse(original_redirect_uri).hostname,
+        return_host=urlparse(return_redirect_uri).hostname,
     )
     return redirect(
         f"{MENDELEY_API_BASE}/oauth/authorize?{urlencode(upstream_params)}",
@@ -113,9 +135,16 @@ def oauth_callback_relay():
             "O estado OAuth é inválido.",
         ) from exc
 
-    target = _validated_chatgpt_callback(
-        str(relay.get("chatgpt_redirect_uri", "")).strip()
-    )
+    stored_return_uri = str(relay.get("chatgpt_return_uri", "")).strip()
+    if stored_return_uri:
+        target = _canonical_chatgpt_callback(stored_return_uri)
+    else:
+        # Backward compatibility for authorization attempts started immediately
+        # before this deployment.
+        target = _canonical_chatgpt_callback(
+            str(relay.get("chatgpt_redirect_uri", "")).strip()
+        )
+
     original_state = str(relay.get("chatgpt_state", "")).strip()
     if not original_state:
         raise BridgeError(400, "invalid_oauth_state", "O estado OAuth original está ausente.")
@@ -139,7 +168,10 @@ def oauth_callback_relay():
         callback_host=urlparse(target).hostname,
         provider_error=outgoing.get("error"),
     )
-    return redirect(f"{target}?{urlencode(outgoing)}", code=302)
+    response = redirect(f"{target}?{urlencode(outgoing)}", code=303)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
 def oauth_token_relay():
@@ -206,11 +238,14 @@ def oauth_token_relay():
         grant_type=grant_type,
         upstream_status=response.status_code,
     )
-    return Response(
+    token_response = Response(
         response.content,
         status=response.status_code,
         content_type=response.headers.get("Content-Type", "application/json"),
     )
+    token_response.headers["Cache-Control"] = "no-store"
+    token_response.headers["Pragma"] = "no-cache"
+    return token_response
 
 
 # Replace the original token handler registered in _bridge_part2.py.
