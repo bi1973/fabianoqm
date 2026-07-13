@@ -41,7 +41,7 @@ Backend para um GPT personalizado consultar e modificar uma biblioteca pessoal d
 2. Escolha **Blueprint** e selecione `render.yaml`, ou crie um Web Service manualmente.
 3. O Render criará `SIGNING_SECRET` automaticamente.
 4. Aguarde o endereço público ficar ativo.
-5. Caso o endereço não seja `https://mendeley-controlled-writer.onrender.com`, substitua esse domínio em `openapi-controlled.json`.
+5. Caso o endereço não seja `https://mendeley-controlled-writer.onrender.com`, substitua esse domínio em `openapi-controlled.json` e defina `PUBLIC_BASE_URL` no Render.
 
 O `render.yaml` usa um único processo Gunicorn porque as prévias de PDF são temporárias e locais à instância.
 
@@ -54,12 +54,21 @@ No editor do GPT, configure OAuth usando o mesmo domínio do backend:
 - Escopo: `all`
 - Método de troca: cabeçalho de autorização básica
 
-O bridge encaminha o fluxo para:
+O bridge encaminha a autorização ao Mendeley, recebe o retorno em sua própria rota e depois devolve o código ao callback original do ChatGPT. A troca do token também é encaminhada ao Mendeley com a URI correta usada na autorização.
 
-- `https://api.mendeley.com/oauth/authorize`
-- `https://api.mendeley.com/oauth/token`
+No aplicativo do Mendeley, cadastre como **Redirect URL**:
 
-Cadastre no aplicativo do Mendeley a URL de callback exibida pelo editor do GPT, exatamente como apresentada.
+```text
+https://SEU-DOMINIO/oauth/callback
+```
+
+Para o serviço padrão deste repositório:
+
+```text
+https://mendeley-controlled-writer.onrender.com/oauth/callback
+```
+
+A URL de retorno exibida pelo editor do GPT não deve ser cadastrada diretamente no Mendeley nesta arquitetura; o bridge a valida e faz o repasse seguro.
 
 ## Instalação local
 
@@ -68,6 +77,7 @@ python -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 export SIGNING_SECRET="um-segredo-longo-e-aleatorio"
+export PUBLIC_BASE_URL="http://localhost:10000"
 flask --app app run --port 10000
 ```
 
@@ -78,6 +88,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 $env:SIGNING_SECRET="um-segredo-longo-e-aleatorio"
+$env:PUBLIC_BASE_URL="http://localhost:10000"
 flask --app app run --port 10000
 ```
 
