@@ -54,7 +54,9 @@ No editor do GPT, configure OAuth usando o mesmo domínio do backend:
 - Escopo: `all`
 - Método de troca: cabeçalho de autorização básica
 
-O bridge encaminha a autorização ao Mendeley, recebe o retorno em sua própria rota e depois devolve o código ao callback original do ChatGPT. A troca do token também é encaminhada ao Mendeley com a URI correta usada na autorização.
+O bridge encaminha a autorização ao Mendeley, recebe o retorno em sua própria rota e depois devolve o código ao callback do ChatGPT. A troca do token também é encaminhada ao Mendeley com a URI correta usada na autorização.
+
+Callbacks antigos em `chat.openai.com` são validados, mas o retorno do navegador é normalizado para `chatgpt.com` por padrão. Isso evita que a migração entre os dois domínios termine em `chatgpt.com/undefined`. O host canônico pode ser alterado pela variável `CHATGPT_CALLBACK_HOST`, limitada a `chatgpt.com` ou `chat.openai.com`.
 
 No aplicativo do Mendeley, cadastre como **Redirect URL**:
 
@@ -78,6 +80,7 @@ python -m venv .venv
 pip install -r requirements.txt
 export SIGNING_SECRET="um-segredo-longo-e-aleatorio"
 export PUBLIC_BASE_URL="http://localhost:10000"
+export CHATGPT_CALLBACK_HOST="chatgpt.com"
 flask --app app run --port 10000
 ```
 
@@ -89,6 +92,7 @@ python -m venv .venv
 pip install -r requirements.txt
 $env:SIGNING_SECRET="um-segredo-longo-e-aleatorio"
 $env:PUBLIC_BASE_URL="http://localhost:10000"
+$env:CHATGPT_CALLBACK_HOST="chatgpt.com"
 flask --app app run --port 10000
 ```
 
