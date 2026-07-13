@@ -11,9 +11,16 @@ host can redirect to the new ``chatgpt.com`` frontend without preserving the
 OAuth callback route, producing ``/undefined``. The relay therefore validates
 both official hosts but returns the browser to a configurable canonical host,
 which defaults to ``chatgpt.com``.
+
+OAuth provider failures are logged only as a small allow-listed and redacted
+summary. Tokens, secrets, authorization codes, state values and raw response
+bodies are never written to the audit log.
 """
 
-APP_VERSION = "1.0.2"
+import html as html_lib
+
+
+APP_VERSION = "1.0.3"
 OAUTH_PUBLIC_BASE_URL = os.getenv(
     "PUBLIC_BASE_URL", "https://mendeley-controlled-writer.onrender.com"
 ).rstrip("/")
@@ -56,6 +63,62 @@ def _canonical_chatgpt_callback(value: str) -> str:
     validated = _validated_chatgpt_callback(value)
     parsed = urlparse(validated)
     return f"https://{CHATGPT_CALLBACK_HOST}{parsed.path}"
+
+
+def _sanitize_oauth_text(value: Any, *, limit: int = 500) -> str:
+    """Return a compact diagnostic string with credential-like values removed."""
+
+    text = html_lib.unescape(str(value or ""))
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(
+        r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+",
+        r"\1 [REDACTED]",
+        text,
+    )
+    text = re.sub(
+        r"(?i)\b(access_token|refresh_token|client_secret|authorization|code|state)\b"
+        r"\s*[:=]\s*[\"']?[^\s,;&\"']+",
+        r"\1=[REDACTED]",
+        text,
+    )
+    text = re.sub(
+        r"(?i)([?&](?:access_token|refresh_token|client_secret|code|state)=)[^&\s]+",
+        r"\1[REDACTED]",
+        text,
+    )
+    # Long opaque strings are likely tokens, secrets, state values or codes.
+    text = re.sub(r"\b[A-Za-z0-9._~-]{32,}\b", "[REDACTED]", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:limit]
+
+
+def _sanitized_oauth_provider_error(response: requests.Response) -> dict[str, Any]:
+    """Extract only safe, useful fields from a failed Mendeley token response."""
+
+    result: dict[str, Any] = {
+        "provider_content_type": str(response.headers.get("Content-Type", ""))[:120],
+    }
+    payload: Any = None
+    try:
+        payload = response.json()
+    except (ValueError, requests.JSONDecodeError):
+        payload = None
+
+    if isinstance(payload, dict):
+        for key in ("error", "error_description", "message", "detail", "status"):
+            value = payload.get(key)
+            if value is not None and not isinstance(value, (dict, list)):
+                safe_value = _sanitize_oauth_text(value)
+                if safe_value:
+                    result[f"provider_{key}"] = safe_value
+    elif response.text:
+        safe_excerpt = _sanitize_oauth_text(response.text)
+        if safe_excerpt:
+            result["provider_message"] = safe_excerpt
+
+    if len(result) == 1:
+        result["provider_message"] = "Resposta sem mensagem diagnóstica segura."
+    return result
 
 
 def oauth_authorize_relay():
@@ -166,7 +229,7 @@ def oauth_callback_relay():
         "oauth_callback_relay",
         "forwarded" if "code" in outgoing else "provider_error",
         callback_host=urlparse(target).hostname,
-        provider_error=outgoing.get("error"),
+        provider_error=_sanitize_oauth_text(outgoing.get("error")),
     )
     response = redirect(f"{target}?{urlencode(outgoing)}", code=303)
     response.headers["Cache-Control"] = "no-store"
@@ -232,12 +295,18 @@ def oauth_token_relay():
             "Falha ao acessar o OAuth do Mendeley.",
         ) from exc
 
+    audit_fields: dict[str, Any] = {
+        "grant_type": grant_type,
+        "upstream_status": response.status_code,
+    }
+    if response.status_code != 200:
+        audit_fields.update(_sanitized_oauth_provider_error(response))
     _audit(
         "oauth_token_relay",
         "success" if response.status_code == 200 else "upstream_error",
-        grant_type=grant_type,
-        upstream_status=response.status_code,
+        **audit_fields,
     )
+
     token_response = Response(
         response.content,
         status=response.status_code,
